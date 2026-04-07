@@ -7,7 +7,15 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from db_utils import DEFAULT_DB_CONFIG, delete_db_profile, load_db_profiles, normalize_db_config, save_db_profile, save_result_to_mariadb, test_mariadb_connection
+from db_utils import (
+    DEFAULT_DB_CONFIG,
+    delete_db_profile,
+    load_db_profiles,
+    normalize_db_config,
+    save_db_profile,
+    save_result_to_mariadb,
+    test_mariadb_connection,
+)
 from prompts import DEFAULT_USER_PROMPT
 
 
@@ -83,15 +91,17 @@ def load_selected_db_profile() -> None:
     st.session_state["selected_db_profile"] = selected_name
     if not selected_name:
         return
+
     config = profiles.get(selected_name)
     if not config:
         return
+
     apply_db_config_to_session(config)
     st.session_state["db_profile_name"] = selected_name
     st.session_state["db_profile_name_widget"] = selected_name
     st.session_state["db_profile_feedback"] = {
         "type": "success",
-        "message": f"DB 프로필 '{selected_name}'을 불러왔습니다.",
+        "message": f"Loaded DB profile '{selected_name}'.",
     }
 
 
@@ -146,6 +156,12 @@ def init_session_state() -> None:
         st.session_state["db_profile_name_widget"] = first_profile_name
         apply_db_config_to_session(initial_db_profiles[first_profile_name])
 
+    if (
+        st.session_state.get("db_main_table") == "insp_main"
+        and st.session_state.get("db_detail_table") == "insp_detail"
+    ):
+        apply_db_config_to_session(get_default_db_config())
+
     if st.session_state.get("refresh_db_profile_widgets"):
         st.session_state["selected_db_profile_widget"] = st.session_state.get("selected_db_profile", "")
         st.session_state["db_profile_name_widget"] = st.session_state.get("db_profile_name", "")
@@ -154,68 +170,68 @@ def init_session_state() -> None:
 
 def render_sidebar_settings() -> tuple[str, str, bool, str, str]:
     with st.sidebar:
-        st.header("LLM 설정")
+        st.header("LLM Settings")
         endpoint_url = st.text_input("Endpoint URL", value="http://ai.paruda.com:11434/api/chat")
         model = st.text_input("Model", value="gemma4:e4b")
-        api_key_required = st.toggle("API Key 필요", value=False)
+        api_key_required = st.toggle("Require API Key", value=False)
         api_key = ""
         if api_key_required:
             api_key = st.text_input("API Key", type="password", placeholder="Bearer token")
         extra_prompt = st.text_area(
-            "추가 프롬프트",
+            "Extra Prompt",
             value=DEFAULT_USER_PROMPT,
             height=420,
-            help="JSON 추출 시 시스템 프롬프트에 더해 사용자 지시를 추가합니다.",
+            help="Additional instructions appended to the extraction request.",
         )
 
         st.divider()
-        with st.expander("MariaDB 저장 설정", expanded=False):
+        with st.expander("MariaDB Save Settings", expanded=False):
             db_profiles = load_db_profiles()
             profile_options = [""] + sorted(db_profiles.keys())
 
-            st.caption("프로필 관리")
+            st.caption("Profiles")
             st.selectbox(
-                "저장된 프로필",
+                "Saved Profile",
                 options=profile_options,
                 key="selected_db_profile_widget",
-                format_func=lambda name: name or "선택 안 함",
+                format_func=lambda name: name or "None",
                 on_change=load_selected_db_profile,
             )
-            st.text_input("프로필명", key="db_profile_name_widget", placeholder="예: 운영DB")
+            st.text_input("Profile Name", key="db_profile_name_widget", placeholder="e.g. local-db")
             profile_save_col, profile_delete_col = st.columns(2)
             with profile_save_col:
-                if st.button("프로필 저장", use_container_width=True):
+                if st.button("Save Profile", use_container_width=True):
                     try:
                         profile_name = st.session_state.get("db_profile_name_widget", "").strip()
                         save_db_profile(profile_name, get_db_config_from_session())
                     except Exception as exc:
-                        st.session_state["db_profile_feedback"] = {"type": "error", "message": f"프로필 저장 실패: {exc}"}
+                        st.session_state["db_profile_feedback"] = {"type": "error", "message": f"Profile save failed: {exc}"}
                     else:
                         st.session_state["selected_db_profile"] = profile_name
                         st.session_state["db_profile_name"] = profile_name
                         st.session_state["refresh_db_profile_widgets"] = True
-                        st.session_state["db_profile_feedback"] = {"type": "success", "message": f"DB 프로필 '{profile_name}'을 저장했습니다."}
+                        st.session_state["db_profile_feedback"] = {"type": "success", "message": f"Saved DB profile '{profile_name}'."}
                         st.rerun()
             with profile_delete_col:
-                if st.button("프로필 삭제", use_container_width=True):
+                if st.button("Delete Profile", use_container_width=True):
                     try:
                         profile_name = st.session_state.get("selected_db_profile_widget", "").strip() or st.session_state.get("db_profile_name_widget", "").strip()
                         delete_db_profile(profile_name)
                     except Exception as exc:
-                        st.session_state["db_profile_feedback"] = {"type": "error", "message": f"프로필 삭제 실패: {exc}"}
+                        st.session_state["db_profile_feedback"] = {"type": "error", "message": f"Profile delete failed: {exc}"}
                     else:
                         st.session_state["selected_db_profile"] = ""
                         st.session_state["db_profile_name"] = ""
                         st.session_state["refresh_db_profile_widgets"] = True
                         apply_db_config_to_session(get_default_db_config())
-                        st.session_state["db_profile_feedback"] = {"type": "success", "message": f"DB 프로필 '{profile_name}'을 삭제했습니다."}
+                        st.session_state["db_profile_feedback"] = {"type": "success", "message": f"Deleted DB profile '{profile_name}'."}
                         st.rerun()
 
             profile_feedback = st.session_state.get("db_profile_feedback")
             if profile_feedback:
                 getattr(st, profile_feedback["type"])(profile_feedback["message"])
 
-            st.caption("접속 정보")
+            st.caption("Connection")
             host_col, port_col = st.columns([3, 2])
             with host_col:
                 st.text_input("Host", key="db_host")
@@ -229,11 +245,24 @@ def render_sidebar_settings() -> tuple[str, str, bool, str, str]:
                 st.text_input("Password", type="password", key="db_password")
 
             st.text_input("Database", key="db_name")
-            if st.button("DB 연결 테스트", use_container_width=True):
+
+            table_col1, table_col2 = st.columns(2)
+            with table_col1:
+                st.text_input("Main Table", key="db_main_table")
+            with table_col2:
+                st.text_input("Detail Table", key="db_detail_table")
+
+            key_col1, key_col2 = st.columns(2)
+            with key_col1:
+                st.text_input("Main Key Column", key="db_main_key_column")
+            with key_col2:
+                st.text_input("Detail FK Column", key="db_detail_foreign_key")
+
+            if st.button("Test DB Connection", use_container_width=True):
                 try:
                     message = test_mariadb_connection(get_db_config_from_session())
                 except Exception as exc:
-                    st.session_state["db_connection_feedback"] = {"type": "error", "message": f"DB 연결 실패: {exc}"}
+                    st.session_state["db_connection_feedback"] = {"type": "error", "message": f"DB connection failed: {exc}"}
                 else:
                     st.session_state["db_connection_feedback"] = {"type": "success", "message": message}
                 st.rerun()
@@ -251,10 +280,10 @@ def render_main_section(main_data: Any) -> None:
         table_rows = [{"field": key, "value": value} for key, value in main_data.items()]
         if table_rows:
             st.dataframe(table_rows, use_container_width=True, hide_index=True)
-        with st.expander("Main JSON 보기", expanded=False):
+        with st.expander("Main JSON", expanded=False):
             st.code(json.dumps(main_data, ensure_ascii=False, indent=2), language="json")
     else:
-        st.warning("main 값이 객체 형태가 아닙니다.")
+        st.warning("The main value is not an object.")
         st.write(main_data)
 
 
@@ -263,24 +292,25 @@ def render_detail_section(detail_data: Any) -> None:
     if isinstance(detail_data, list):
         if detail_data:
             st.dataframe(detail_data, use_container_width=True, hide_index=True)
-        with st.expander("Detail JSON 보기", expanded=False):
+        with st.expander("Detail JSON", expanded=False):
             st.code(json.dumps(detail_data, ensure_ascii=False, indent=2), language="json")
     else:
-        st.warning("detail 값이 배열 형태가 아닙니다.")
+        st.warning("The detail value is not an array.")
         st.write(detail_data)
 
 
 def render_extracted_tables(tables: list[dict[str, Any]]) -> None:
-    st.subheader("추출된 표")
+    st.subheader("Extracted Tables")
     if not tables:
-        st.info("인식된 표가 없습니다. 이 경우 텍스트 추출 결과만 LLM에 전달됩니다.")
+        st.info("No tables were detected. Only extracted text will be sent to the LLM.")
         return
+
     for table in tables:
-        st.markdown(f"페이지 {table['page']} / 표 {table['table_index']}")
+        st.markdown(f"Page {table['page']} / Table {table['table_index']}")
         st.dataframe(table["rows"], use_container_width=True)
 
 
-@st.dialog("매칭 수정", width="large")
+@st.dialog("Edit Mapping", width="large")
 def render_edit_dialog() -> None:
     main_rows = st.session_state.get("edit_main_draft")
     detail_rows = st.session_state.get("edit_detail_draft")
@@ -289,24 +319,25 @@ def render_edit_dialog() -> None:
         main_rows = st.session_state.get("edit_main_draft", [])
         detail_rows = st.session_state.get("edit_detail_draft", [])
 
-    st.markdown("Main 수정")
+    st.markdown("Main")
     edited_main_df = st.data_editor(pd.DataFrame(main_rows), use_container_width=True, num_rows="dynamic", key="main_editor_dialog")
     st.session_state["edit_main_draft"] = edited_main_df.to_dict(orient="records")
 
-    st.markdown("Detail 수정")
+    st.markdown("Detail")
     detail_df = pd.DataFrame(detail_rows)
     detail_columns = [column for column in detail_df.columns if column not in HIDDEN_DETAIL_COLUMNS]
     if not detail_df.empty and HIDDEN_DETAIL_COLUMNS:
         detail_df = detail_df[[column for column in detail_df.columns if column not in HIDDEN_DETAIL_COLUMNS]]
+
     if detail_columns:
         if "detail_visible_columns" not in st.session_state or not st.session_state["detail_visible_columns"]:
             st.session_state["detail_visible_columns"] = detail_columns[:]
         selected_visible_columns = st.multiselect(
-            "보이는 Detail 컬럼",
+            "Visible Detail Columns",
             options=detail_columns,
             default=st.session_state.get("detail_visible_columns", detail_columns),
             key="detail_visible_columns",
-            help="선택 해제한 컬럼은 현재 편집본에서 제외됩니다.",
+            help="Hidden columns are excluded only from the current editor view.",
         )
         detail_df = pd.DataFrame(
             [{key: value for key, value in row.items() if key in selected_visible_columns} for row in st.session_state.get("edit_detail_draft", [])]
@@ -322,30 +353,30 @@ def render_edit_dialog() -> None:
 
     save_col, download_col, cancel_col = st.columns(3)
     with save_col:
-        if st.button("저장", type="primary", use_container_width=True):
+        if st.button("Save", type="primary", use_container_width=True):
             try:
                 save_result_to_mariadb(updated_result, get_db_config_from_session(), sanitize_detail_rows)
             except Exception as exc:
-                st.error(f"MariaDB 저장 실패: {exc}")
+                st.error(f"MariaDB save failed: {exc}")
             else:
                 st.session_state["last_result"] = updated_result
                 st.session_state["edit_mode"] = False
                 clear_edit_session()
                 st.session_state["save_feedback"] = {
                     "type": "success",
-                    "message": "매칭 수정 내용을 저장했고 MariaDB 반영도 완료했습니다.",
+                    "message": "Saved mapping changes and updated MariaDB.",
                 }
                 st.rerun()
     with download_col:
         st.download_button(
-            "JSON 다운로드",
+            "Download JSON",
             data=json.dumps(updated_result, ensure_ascii=False, indent=2),
             file_name="matched_result.json",
             mime="application/json",
             use_container_width=True,
         )
     with cancel_col:
-        if st.button("취소", use_container_width=True):
+        if st.button("Cancel", use_container_width=True):
             st.session_state["edit_mode"] = False
             clear_edit_session()
             st.rerun()

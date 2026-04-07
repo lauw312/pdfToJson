@@ -5,8 +5,8 @@
     "user": "root",
     "password": "0000",
     "database": "paru",
-    "main_table": "insp_main",
-    "detail_table": "insp_detail",
+    "main_table": "INSP_HDR",
+    "detail_table": "INSP_DTL",
     "main_key_column": "INSP_ID",
     "detail_foreign_key": "INSP_ID"
   }

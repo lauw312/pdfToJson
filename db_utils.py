@@ -135,10 +135,7 @@ def save_db_profile(profile_name: str, config: dict[str, Any]) -> None:
 
     profiles = load_db_profiles()
     profiles[name] = normalize_db_config(config)
-    DB_PROFILES_PATH.write_text(
-        json.dumps(profiles, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    DB_PROFILES_PATH.write_text(json.dumps(profiles, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def delete_db_profile(profile_name: str) -> None:
@@ -151,10 +148,7 @@ def delete_db_profile(profile_name: str) -> None:
         raise ValueError("선택한 프로필을 찾을 수 없습니다.")
 
     del profiles[name]
-    DB_PROFILES_PATH.write_text(
-        json.dumps(profiles, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    DB_PROFILES_PATH.write_text(json.dumps(profiles, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def is_db_configured(db_config: dict[str, Any]) -> bool:
@@ -162,14 +156,32 @@ def is_db_configured(db_config: dict[str, Any]) -> bool:
     return all(str(db_config.get(field, "")).strip() for field in required_fields)
 
 
+def table_exists(cursor: Any, table_name: str) -> bool:
+    cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+    return cursor.fetchone() is not None
+
+
+def validate_target_tables(cursor: Any, db_config: dict[str, Any]) -> None:
+    missing_tables = [
+        table_name
+        for table_name in [db_config["main_table"], db_config["detail_table"]]
+        if not table_exists(cursor, table_name)
+    ]
+    if missing_tables:
+        missing = ", ".join(missing_tables)
+        raise ValueError(
+            f"MariaDB 테이블이 없습니다: {missing}. 사이드바에서 Main Table / Detail Table 값을 확인해 주세요."
+        )
+
+
 def test_mariadb_connection(db_config: dict[str, Any]) -> str:
     if pymysql is None:
-        raise RuntimeError("PyMySQL가 설치되어 있지 않습니다. `pip install -r requirements.txt`로 의존성을 먼저 설치해 주세요.")
+        raise RuntimeError("PyMySQL이 설치되어 있지 않습니다. `pip install -r requirements.txt`를 먼저 실행해 주세요.")
 
     normalized_config = normalize_db_config(db_config)
     required_fields = ["host", "user", "database"]
     if not all(str(normalized_config.get(field, "")).strip() for field in required_fields):
-        raise ValueError("Host, User, Database는 연결 테스트 전에 입력되어야 합니다.")
+        raise ValueError("Host, User, Database를 입력한 뒤 연결 테스트를 실행해 주세요.")
 
     connection = pymysql.connect(
         host=normalized_config["host"],
@@ -188,10 +200,11 @@ def test_mariadb_connection(db_config: dict[str, Any]) -> str:
             row = cursor.fetchone()
             if not row or row[0] != 1:
                 raise RuntimeError("DB 연결은 되었지만 기본 쿼리 확인에 실패했습니다.")
+            validate_target_tables(cursor, normalized_config)
     finally:
         connection.close()
 
-    return "MariaDB 연결에 성공했습니다."
+    return "MariaDB 연결과 대상 테이블 확인이 완료되었습니다."
 
 
 def save_result_to_mariadb(
@@ -200,11 +213,11 @@ def save_result_to_mariadb(
     sanitize_detail_rows: Any,
 ) -> None:
     if pymysql is None:
-        raise RuntimeError("PyMySQL가 설치되어 있지 않습니다. `pip install -r requirements.txt`로 의존성을 먼저 설치해 주세요.")
+        raise RuntimeError("PyMySQL이 설치되어 있지 않습니다. `pip install -r requirements.txt`를 먼저 실행해 주세요.")
 
     normalized_config = normalize_db_config(db_config)
     if not is_db_configured(normalized_config):
-        raise ValueError("MariaDB 저장 설정이 비어 있습니다. 사이드바에서 접속 정보를 입력해 주세요.")
+        raise ValueError("MariaDB 저장 설정이 비어 있습니다. 사이드바에서 접속 정보와 테이블명을 입력해 주세요.")
 
     main_data = normalize_record_values(dict(result.get("main", {})))
     detail_rows = [
@@ -215,7 +228,7 @@ def save_result_to_mariadb(
         raise ValueError("main 데이터가 없어 저장할 수 없습니다.")
 
     main_key_column = validate_sql_identifier(normalized_config["main_key_column"], "main 키 컬럼")
-    detail_foreign_key = validate_sql_identifier(normalized_config["detail_foreign_key"], "detail 외래키 컬럼")
+    detail_foreign_key = validate_sql_identifier(normalized_config["detail_foreign_key"], "detail 외래 키 컬럼")
     raw_main_key_value = main_data.get(main_key_column)
     main_key_value = None if raw_main_key_value in ("", None) else raw_main_key_value
 
@@ -231,6 +244,8 @@ def save_result_to_mariadb(
 
     try:
         with connection.cursor() as cursor:
+            validate_target_tables(cursor, normalized_config)
+
             if main_key_column in MAIN_AUTO_INCREMENT_COLUMNS:
                 filtered_main_data = {
                     key: value
@@ -238,7 +253,7 @@ def save_result_to_mariadb(
                     if key not in MAIN_AUTO_INCREMENT_COLUMNS
                 }
                 if not filtered_main_data:
-                    raise ValueError("main 저장 컬럼이 없습니다.")
+                    raise ValueError("main 저장 대상 컬럼이 없습니다.")
 
                 insert_columns = list(filtered_main_data.keys())
                 insert_query = (
@@ -264,7 +279,7 @@ def save_result_to_mariadb(
             if main_key_column not in MAIN_AUTO_INCREMENT_COLUMNS:
                 delete_query = (
                     f"DELETE FROM {quote_identifier(normalized_config['detail_table'], 'detail 테이블명')} "
-                    f"WHERE {quote_identifier(detail_foreign_key, 'detail 외래키 컬럼')} = %s"
+                    f"WHERE {quote_identifier(detail_foreign_key, 'detail 외래 키 컬럼')} = %s"
                 )
                 cursor.execute(delete_query, (main_key_value,))
 
